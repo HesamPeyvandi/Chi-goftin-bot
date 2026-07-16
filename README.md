@@ -14,6 +14,19 @@ summary of what people were talking about, on demand via `/summarize`.
    or errors out, the bot silently retries with the next one in the chain, so
    the end user never notices a provider switch.
 
+   ### Language behavior
+
+      Incoming messages can be in any language — Gemini, Grok, and the OpenRouter
+      models are all multilingual, so the bot understands mixed-language group
+      chats without any extra configuration.
+
+      The **output summary is always in Persian**, regardless of the input
+      language, because the summarization prompt explicitly instructs the model
+      to write the recap in casual, conversational Persian and to transliterate
+      non-Persian names into Persian script. To support a different output
+      language, the prompt in `ai_provider.py` (`build_summary_prompt`) would need
+      to be changed.
+
 ## Architecture
 
 ```
