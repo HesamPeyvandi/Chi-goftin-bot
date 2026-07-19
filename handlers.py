@@ -76,6 +76,23 @@ def _parse_message_line(line: str) -> tuple[str, str, str, str]:
     )
 
 
+def _write_export_cell(sheet, row: int, column: int, value: str) -> None:
+    """Write a cell for the export sheet, guarding against two rendering pitfalls:
+
+    - A leading blank line in the message (common when a user hits Enter before
+      typing) makes the cell LOOK empty in Excel, since Excel only shows the
+      first line of a cell unless wrap-text is on. Stripping leading/trailing
+      whitespace fixes this without altering the message's actual content.
+    - openpyxl auto-detects any string starting with "=" as a formula. Since
+      chat messages can start with "=" too, we force the cell's data type back
+      to plain text so Excel never tries to evaluate it as a formula.
+    """
+    value = value.strip() if isinstance(value, str) else value
+    cell = sheet.cell(row=row, column=column, value=value)
+    if isinstance(value, str) and value.startswith("="):
+        cell.data_type = "s"
+
+
 def register_handlers(bot: telebot.TeleBot) -> None:
     @bot.message_handler(commands=["summarize"])
     def summarize_chat(message: telebot.types.Message):
@@ -171,11 +188,36 @@ def register_handlers(bot: telebot.TeleBot) -> None:
             workbook = Workbook()
             sheet = workbook.active
             sheet.title = "Messages"
-            sheet.append(["ردیف", "ساعت", "فرستنده", "فوروارد از", "متن پیام"])
+            # The content is mostly Persian (RTL). Without this, Excel's
+            # auto-detected text direction can misjudge cells that end in an
+            # emoji (a weak/neutral-direction character), rendering the text
+            # outside the visible cell area even though the data is intact.
+            sheet.sheet_view.rightToLeft = True
 
-            for row_number, line in enumerate(all_messages, start=1):
+            headers = ["ردیف", "ساعت", "فرستنده", "فوروارد از", "متن پیام"]
+            for col_index, header in enumerate(headers, start=1):
+                sheet.cell(row=1, column=col_index, value=header)
+
+            for offset, line in enumerate(all_messages, start=0):
+                row_number = offset + 1
+                excel_row = row_number + 1  # +1 to skip the header row
                 time_str, sender, forwarded_from, text = _parse_message_line(line)
-                sheet.append([row_number, time_str, sender, forwarded_from, text])
+                row_values = [row_number, time_str, sender, forwarded_from, text]
+                for col_index, value in enumerate(row_values, start=1):
+                    _write_export_cell(sheet, excel_row, col_index, value)
+
+            # Let the message column wrap so multi-line messages are fully visible,
+            # and force RTL reading order explicitly (belt-and-suspenders on top of
+            # the sheet-level setting above) so mixed Persian+emoji text can't be
+            # miscalculated as LTR and pushed outside the visible cell.
+            for row in sheet.iter_rows(min_row=2, min_col=3, max_col=5):
+                for cell in row:
+                    cell.alignment = cell.alignment.copy(
+                        wrap_text=(cell.column == 5),
+                        vertical="top",
+                        horizontal="right",
+                        readingOrder=2,
+                    )
 
             column_widths = [6, 10, 22, 22, 80]
             for index, width in enumerate(column_widths, start=1):
