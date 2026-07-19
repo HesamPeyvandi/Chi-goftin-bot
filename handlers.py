@@ -8,15 +8,27 @@ Telegram bot handlers.
 """
 
 import datetime
+import io
 import logging
+import re
 
 import telebot
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 
 import ai_provider
 import config
 import database as db
 
 logger = logging.getLogger(__name__)
+
+# Reverses _format_message() so exported rows can show time/sender/text
+# in separate spreadsheet columns instead of one raw line.
+MESSAGE_LINE_PATTERN = re.compile(
+    r"^\[ساعت (?P<time>\d{2}:\d{2}) \| (?P<sender>[^\]]+?)"
+    r"(?: \(فوروارد از (?P<forward>[^)]+)\))?\]: (?P<text>.*)$",
+    re.DOTALL,
+)
 
 TEHRAN_TZ = datetime.timezone(datetime.timedelta(hours=3, minutes=30))
 
@@ -49,6 +61,19 @@ def _format_message(message: telebot.types.Message) -> str:
     if is_forwarded:
         return f"[ساعت {message_time} | {user_name} (فوروارد از {forward_source})]: {text}"
     return f"[ساعت {message_time} | {user_name}]: {text}"
+
+
+def _parse_message_line(line: str) -> tuple[str, str, str, str]:
+    """Split a stored formatted line back into (time, sender, forwarded_from, text)."""
+    match = MESSAGE_LINE_PATTERN.match(line)
+    if not match:
+        return "", "", "", line
+    return (
+        match.group("time") or "",
+        match.group("sender") or "",
+        match.group("forward") or "",
+        match.group("text") or "",
+    )
 
 
 def register_handlers(bot: telebot.TeleBot) -> None:
@@ -109,6 +134,75 @@ def register_handlers(bot: telebot.TeleBot) -> None:
         if not _is_admin(message.from_user.id):
             return
         _handle_permanent_toggle(bot, message, is_permanent=False)
+
+    @bot.message_handler(commands=["export"])
+    def export_messages(message: telebot.types.Message):
+        if not _is_admin(message.from_user.id):
+            return
+
+        command_parts = message.text.split()
+        if len(command_parts) < 2:
+            bot.reply_to(
+                message,
+                "استفاده: /export <chat_id>\nبرای پیدا کردن chat_id هر گروه از /groups استفاده کن.",
+            )
+            return
+
+        try:
+            chat_id = int(command_parts[1])
+        except ValueError:
+            bot.reply_to(message, "chat_id باید یک عدد باشه.")
+            return
+
+        if not db.group_exists(chat_id):
+            bot.reply_to(message, "این گروه هنوز شناخته نشده.")
+            return
+
+        all_messages = db.get_all_messages(chat_id)
+        if not all_messages:
+            bot.reply_to(message, "این گروه هیچ پیام ذخیره‌شده‌ای نداره.")
+            return
+
+        status_message = bot.reply_to(message, f"در حال ساخت فایل اکسل ({len(all_messages)} پیام)... ⏳")
+
+        try:
+            group_title = db.get_group_title(chat_id) or str(chat_id)
+
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Messages"
+            sheet.append(["ردیف", "ساعت", "فرستنده", "فوروارد از", "متن پیام"])
+
+            for row_number, line in enumerate(all_messages, start=1):
+                time_str, sender, forwarded_from, text = _parse_message_line(line)
+                sheet.append([row_number, time_str, sender, forwarded_from, text])
+
+            column_widths = [6, 10, 22, 22, 80]
+            for index, width in enumerate(column_widths, start=1):
+                sheet.column_dimensions[get_column_letter(index)].width = width
+
+            file_buffer = io.BytesIO()
+            workbook.save(file_buffer)
+            file_buffer.seek(0)
+
+            safe_title = re.sub(r"[^\w\-]+", "_", group_title, flags=re.UNICODE).strip("_") or str(chat_id)
+            file_name = f"export_{safe_title}_{chat_id}.xlsx"
+
+            bot.send_document(
+                message.chat.id,
+                document=file_buffer,
+                visible_file_name=file_name,
+                reply_to_message_id=message.message_id,
+                caption=f"اکسپورت {len(all_messages)} پیام از «{group_title}»",
+            )
+        except Exception as error:
+            bot.reply_to(message, "متاسفانه تو ساخت فایل اکسپورت مشکلی پیش اومد.")
+            logger.error("Export failed for chat %s: %s", chat_id, error)
+        finally:
+            try:
+                bot.delete_message(status_message.chat.id, status_message.message_id)
+            except Exception:
+                pass
 
     @bot.message_handler(func=lambda message: True)
     def save_message(message: telebot.types.Message):

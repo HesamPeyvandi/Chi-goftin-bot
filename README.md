@@ -24,6 +24,8 @@ ai_provider.py     Gemini -> Grok -> OpenRouter fallback chain + the summarizati
 handlers.py       Telegram command/message handlers
 ```
 
+`openpyxl` is used only by the `/export` admin command to build the `.xlsx` file; everything else has no dependency on it.
+
 ### AI provider fallback chain
 
 Requests are tried in this exact order, and the first one that succeeds wins:
@@ -58,8 +60,9 @@ Only the Telegram user ID set in `ADMIN_USER_ID` can run these:
 | `/groups` | Lists every group the bot has seen, with its `chat_id` and current retention status. |
 | `/setpermanent <chat_id>` | Marks a group for permanent (unpruned) message storage. |
 | `/removepermanent <chat_id>` | Reverts a group to the default, pruned retention policy. |
+| `/export <chat_id>` | Exports every stored message for that group as an `.xlsx` file (columns: row, time, sender, forwarded-from, text) and sends it directly in the chat. |
 
-Run `/groups` first to find a group's `chat_id`, then use it with the other two commands.
+Run `/groups` first to find a group's `chat_id`, then use it with the other commands. `/export` pulls the group's **full** history from the database — it isn't limited by `DEFAULT_MESSAGE_HISTORY_LIMIT` — so it's the only way to see everything currently stored, including for permanent groups.
 
 ## Setup
 

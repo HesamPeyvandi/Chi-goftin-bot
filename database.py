@@ -168,3 +168,26 @@ def get_recent_messages(chat_id: int, limit: int) -> list[str]:
         )
         rows = cursor.fetchall()
     return [row[0] for row in reversed(rows)]
+
+
+def get_all_messages(chat_id: int) -> list[str]:
+    """Return every stored formatted message for a group, oldest first.
+
+    Used by the /export admin command, which needs the full history
+    regardless of DEFAULT_MESSAGE_HISTORY_LIMIT.
+    """
+    with _cursor() as cursor:
+        cursor.execute(
+            "SELECT formatted_text FROM messages WHERE chat_id = ? ORDER BY id ASC",
+            (chat_id,),
+        )
+        rows = cursor.fetchall()
+    return [row[0] for row in rows]
+
+
+def get_group_title(chat_id: int) -> str | None:
+    """Return the stored title for a group, or None if it isn't known."""
+    with _cursor() as cursor:
+        cursor.execute("SELECT title FROM groups WHERE chat_id = ?", (chat_id,))
+        row = cursor.fetchone()
+    return row[0] if row else None
